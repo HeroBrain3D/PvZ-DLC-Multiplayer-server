@@ -7,6 +7,13 @@ const salas = {}; // { "codigo": { host: ws, cliente: ws, password: "..." } }
 
 const server = http.createServer((req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+
+// Ruta para que UptimeRobot haga ping y el servidor despierte
+    if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/ping') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Servidor activo y funcionando');
+        return;
+    }
     
     if (parsedUrl.pathname === '/check') {
         const roomCode = parsedUrl.searchParams.get('room');
