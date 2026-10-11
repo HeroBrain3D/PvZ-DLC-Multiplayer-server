@@ -8,7 +8,7 @@ const salas = {}; // { "codigo": { host: ws, cliente: ws, password: "..." } }
 const server = http.createServer((req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
 
-// Ruta para que UptimeRobot haga ping y el servidor despierte
+    // Ruta para que UptimeRobot haga ping y el servidor despierte
     if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/ping') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('Servidor activo y funcionando');
@@ -49,74 +49,74 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
-wss.on('connection', (ws, request) => {
-    const parsedUrl = new URL(request.url, `http://${request.headers.host}`);
+wss.on('connection', (ws, req) => {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const roomCode = parsedUrl.searchParams.get('room');
     const password = parsedUrl.searchParams.get('pass');
     const role = parsedUrl.searchParams.get('role'); // 'host' o 'cliente'
+    const nombre = parsedUrl.searchParams.get('nombre') || 'Jugador';
 
-    if (!roomCode || !role) {
+    if (!roomCode) {
         ws.close();
         return;
     }
 
-    let currentRoom = roomCode;
-    let isHost = (role === 'host');
+    // Si entra el anfitrión (host)
+    if (role === 'host') {
+        salas[roomCode] = {
+            host: ws,
+            cliente: null,
+            password: password
+        };
 
-    if (isHost) {
-        salas[currentRoom] = { host: ws, cliente: null, password: password || '' };
-        console.log(`Host conectado en sala: ${currentRoom}`);
-    } else {
-        const room = salas[currentRoom];
-        if (!room || (room.password && room.password !== password) || room.cliente) {
+        ws.on('close', () => {
+            if (salas[roomCode]) {
+                if (salas[roomCode].cliente) {
+                    salas[roomCode].cliente.send(JSON.stringify({ type: 'host_desconectado' }));
+                }
+                delete salas[roomCode];
+            }
+        });
+    } 
+    // Si entra el invitado (cliente)
+    else if (role === 'cliente') {
+        if (!salas[roomCode]) {
             ws.close();
             return;
         }
-        room.cliente = ws;
-        console.log(`Cliente conectado a sala: ${currentRoom}`);
-        
-        if (room.host && room.host.readyState === WebSocket.OPEN) {
-            room.host.send(JSON.stringify({ type: 'cliente_conectado' }));
+        salas[roomCode].cliente = ws;
+
+        // Notificamos al host que el cliente se ha conectado, enviando su nombre
+        if (salas[roomCode].host) {
+            salas[roomCode].host.send(JSON.stringify({ 
+                type: 'cliente_conectado', 
+                nombre: nombre 
+            }));
         }
+
+        ws.on('close', () => {
+            if (salas[roomCode]) {
+                salas[roomCode].cliente = null;
+                if (salas[roomCode].host) {
+                    salas[roomCode].host.send(JSON.stringify({ type: 'cliente_desconectado' }));
+                }
+            }
+        });
     }
 
+    // Reenvío de mensajes de chat en tiempo real entre ambos
     ws.on('message', (message) => {
-        const room = salas[currentRoom];
+        const room = salas[roomCode];
         if (!room) return;
 
-        // Reenviar mensajes o chat entre el host y el cliente
-        if (isHost) {
-            if (room.cliente && room.cliente.readyState === WebSocket.OPEN) {
-                room.cliente.send(message);
-            }
-        } else {
-            if (room.host && room.host.readyState === WebSocket.OPEN) {
-                room.host.send(message);
-            }
-        }
-    });
-
-    ws.on('close', () => {
-        const room = salas[currentRoom];
-        if (!room) return;
-
-        if (isHost) {
-            if (room.cliente && room.cliente.readyState === WebSocket.OPEN) {
-                room.cliente.send(JSON.stringify({ type: 'host_desconectado' }));
-                room.cliente.close();
-            }
-            delete salas[currentRoom];
-            console.log(`Sala destruida (host desconectado): ${currentRoom}`);
-        } else {
-            room.cliente = null;
-            if (room.host && room.host.readyState === WebSocket.OPEN) {
-                room.host.send(JSON.stringify({ type: 'cliente_desconectado' }));
-            }
-            console.log(`Cliente abandonó la sala: ${currentRoom}`);
+        if (ws === room.host && room.cliente) {
+            room.cliente.send(message);
+        } else if (ws === room.cliente && room.host) {
+            room.host.send(message);
         }
     });
 });
 
 server.listen(PORT, () => {
-    console.log(`Servidor Relay WebSocket y HTTP corriendo en puerto ${PORT}`);
+    console.log(`Servidor relay escuchando en el puerto ${PORT}`);
 });
