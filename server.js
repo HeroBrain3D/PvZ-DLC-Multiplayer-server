@@ -3,12 +3,11 @@ const http = require('http');
 const { URL } = require('url');
 
 const PORT = process.env.PORT || 8910;
-const salas = {}; // { "codigo": { host: ws, cliente: ws, password: "..." } }
+const salas = {}; // { "codigo": { host: ws, cliente: ws, password: "...", nombreHost: "...", nombreCliente: "..." } }
 
 const server = http.createServer((req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
 
-    // Ruta para que UptimeRobot haga ping y el servidor despierte
     if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/ping') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('Servidor activo y funcionando');
@@ -53,7 +52,7 @@ wss.on('connection', (ws, req) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const roomCode = parsedUrl.searchParams.get('room');
     const password = parsedUrl.searchParams.get('pass');
-    const role = parsedUrl.searchParams.get('role'); // 'host' o 'cliente'
+    const role = parsedUrl.searchParams.get('role');
     const nombre = parsedUrl.searchParams.get('nombre') || 'Jugador';
 
     if (!roomCode) {
@@ -61,32 +60,35 @@ wss.on('connection', (ws, req) => {
         return;
     }
 
-    // Si entra el anfitrión (host)
     if (role === 'host') {
         salas[roomCode] = {
             host: ws,
             cliente: null,
-            password: password
+            password: password,
+            nombreHost: nombre,
+            nombreCliente: ''
         };
 
         ws.on('close', () => {
             if (salas[roomCode]) {
                 if (salas[roomCode].cliente) {
-                    salas[roomCode].cliente.send(JSON.stringify({ type: 'host_desconectado' }));
+                    salas[roomCode].cliente.send(JSON.stringify({ 
+                        type: 'host_desconectado', 
+                        nombre: salas[roomCode].nombreHost 
+                    }));
                 }
                 delete salas[roomCode];
             }
         });
     } 
-    // Si entra el invitado (cliente)
     else if (role === 'cliente') {
         if (!salas[roomCode]) {
             ws.close();
             return;
         }
         salas[roomCode].cliente = ws;
+        salas[roomCode].nombreCliente = nombre;
 
-        // Notificamos al host que el cliente se ha conectado, enviando su nombre
         if (salas[roomCode].host) {
             salas[roomCode].host.send(JSON.stringify({ 
                 type: 'cliente_conectado', 
@@ -96,15 +98,19 @@ wss.on('connection', (ws, req) => {
 
         ws.on('close', () => {
             if (salas[roomCode]) {
+                const nombreSaliendo = salas[roomCode].nombreCliente;
                 salas[roomCode].cliente = null;
+                salas[roomCode].nombreCliente = '';
                 if (salas[roomCode].host) {
-                    salas[roomCode].host.send(JSON.stringify({ type: 'cliente_desconectado' }));
+                    salas[roomCode].host.send(JSON.stringify({ 
+                        type: 'cliente_desconectado', 
+                        nombre: nombreSaliendo 
+                    }));
                 }
             }
         });
     }
 
-    // Reenvío de mensajes de chat en tiempo real entre ambos
     ws.on('message', (message) => {
         const room = salas[roomCode];
         if (!room) return;
